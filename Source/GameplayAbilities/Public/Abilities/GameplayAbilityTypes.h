@@ -149,7 +149,7 @@ struct GAMEPLAYABILITIES_API FGameplayAbilityActorInfo
 
 	/** PlayerController associated with the owning actor. This will often be null! */
 	UPROPERTY(BlueprintReadOnly, Category = "ActorInfo")
-	TWeakObjectPtr<APlayerController>	PlayerController;
+	TWeakObjectPtr<AController>	PlayerController;
 
 	/** Ability System component associated with the owner actor, shouldn't be null */
 	UPROPERTY(BlueprintReadOnly, Category = "ActorInfo")

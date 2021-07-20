@@ -27,7 +27,7 @@ void AGameplayAbilityWorldReticle::Tick(float DeltaTime)
 	FaceTowardSource(bFaceOwnerFlat);
 }
 
-void AGameplayAbilityWorldReticle::InitializeReticle(AActor* InTargetingActor, APlayerController* PlayerController, FWorldReticleParameters InParameters)
+void AGameplayAbilityWorldReticle::InitializeReticle(AActor* InTargetingActor, AController* PlayerController, FWorldReticleParameters InParameters)
 {
 	check(InTargetingActor);
 	TargetingActor = InTargetingActor;

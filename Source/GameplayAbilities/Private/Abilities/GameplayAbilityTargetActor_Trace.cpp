@@ -84,7 +84,7 @@ void AGameplayAbilityTargetActor_Trace::AimWithPlayerController(const AActor* In
 		return;
 	}
 
-	APlayerController* PC = OwningAbility->GetCurrentActorInfo()->PlayerController.Get();
+	AController* PC = OwningAbility->GetCurrentActorInfo()->PlayerController.Get();
 	check(PC);
 
 	FVector ViewStart;

@@ -21,13 +21,13 @@ void FGameplayAbilityActorInfo::InitFromActor(AActor *InOwnerActor, AActor *InAv
 	AbilitySystemComponent = InAbilitySystemComponent;
 	AffectedAnimInstanceTag = InAbilitySystemComponent->AffectedAnimInstanceTag; 
 	
-	APlayerController* OldPC = PlayerController.Get();
+	AController* OldPC = PlayerController.Get();
 
 	// Look for a player controller or pawn in the owner chain.
 	AActor *TestActor = InOwnerActor;
 	while (TestActor)
 	{
-		if (APlayerController * CastPC = Cast<APlayerController>(TestActor))
+		if (AController * CastPC = Cast<AController>(TestActor))
 		{
 			PlayerController = CastPC;
 			break;
@@ -35,7 +35,7 @@ void FGameplayAbilityActorInfo::InitFromActor(AActor *InOwnerActor, AActor *InAv
 
 		if (APawn * Pawn = Cast<APawn>(TestActor))
 		{
-			PlayerController = Cast<APlayerController>(Pawn->GetController());
+			PlayerController = Pawn->GetController();
 			break;
 		}
 
@@ -77,7 +77,7 @@ void FGameplayAbilityActorInfo::ClearActorInfo()
 
 bool FGameplayAbilityActorInfo::IsLocallyControlled() const
 {
-	if (const APlayerController* PC = PlayerController.Get())
+	if (const AController* PC = PlayerController.Get())
 	{
 		return PC->IsLocalController();
 	}
@@ -92,7 +92,7 @@ bool FGameplayAbilityActorInfo::IsLocallyControlled() const
 
 bool FGameplayAbilityActorInfo::IsLocallyControlledPlayer() const
 {
-	if (const APlayerController* PC = PlayerController.Get())
+	if (const AController* PC = PlayerController.Get())
 	{
 		return PC->IsLocalController();
 	}

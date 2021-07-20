@@ -1202,7 +1202,7 @@ bool UAbilitySystemComponent::InternalTryActivateAbility(FGameplayAbilitySpecHan
 	ENetRole NetMode = ROLE_SimulatedProxy;
 
 	// Use PC netmode if its there
-	if (APlayerController* PC = ActorInfo->PlayerController.Get())
+	if (AController* PC = ActorInfo->PlayerController.Get())
 	{
 		NetMode = PC->GetLocalRole();
 	}

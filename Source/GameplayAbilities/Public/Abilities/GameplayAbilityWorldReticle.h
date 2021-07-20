@@ -41,7 +41,7 @@ public:
 
 	virtual bool IsNetRelevantFor(const AActor* RealViewer, const AActor* ViewTarget, const FVector& SrcLocation) const override;
 
-	void InitializeReticle(AActor* InTargetingActor, APlayerController* PlayerController, FWorldReticleParameters InParameters);
+	void InitializeReticle(AActor* InTargetingActor, AController* PlayerController, FWorldReticleParameters InParameters);
 
 	void SetIsTargetValid(bool bNewValue);
 	void SetIsTargetAnActor(bool bNewValue);
@@ -88,7 +88,7 @@ protected:
 
 	/** This is used in the process of determining whether we should replicate to a specific client. */
 	UPROPERTY(BlueprintReadOnly, Category = "Network")
-	APlayerController* MasterPC;
+	AController* MasterPC;
 
 	/** In the future, we may want to grab things like sockets off of this. */
 	UPROPERTY(BlueprintReadOnly, Category = "Network")
