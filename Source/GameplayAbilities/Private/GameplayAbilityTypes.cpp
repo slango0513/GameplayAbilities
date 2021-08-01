@@ -94,7 +94,7 @@ bool FGameplayAbilityActorInfo::IsLocallyControlledPlayer() const
 {
 	if (const AController* PC = PlayerController.Get())
 	{
-		return PC->IsLocalController();
+		return PC->IsLocalPlayerController();
 	}
 
 	return false;
