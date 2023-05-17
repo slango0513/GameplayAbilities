@@ -4,9 +4,13 @@
 #include "GameplayEffectAggregator.h"
 #include "AbilitySystemGlobals.h"
 #include "AbilitySystemComponent.h"
+#include "AbilitySystemLog.h"
+#include "Engine/World.h"
 #include "GameplayEffect.h"
 #include "GameplayEffectUIData.h"
 #include "GameplayAbilitySpec.h"
+
+#include UE_INLINE_GENERATED_CPP_BY_NAME(AbilitySystemBlueprintLibrary)
 
 UAbilitySystemBlueprintLibrary::UAbilitySystemBlueprintLibrary(const FObjectInitializer& ObjectInitializer)
 : Super(ObjectInitializer)
@@ -139,6 +143,16 @@ bool UAbilitySystemBlueprintLibrary::NotEqual_GameplayAttributeGameplayAttribute
 	return (AttributeA != AttributeB);
 }
 
+FString UAbilitySystemBlueprintLibrary::GetDebugStringFromGameplayAttribute(const FGameplayAttribute& Attribute)
+{
+	if (const UClass* AttributeSetClass = Attribute.GetAttributeSetClass())
+	{
+		return FString::Format(TEXT("{0}.{1}"), { AttributeSetClass->GetName(), Attribute.GetName() });
+	}
+
+	return Attribute.GetName();
+}
+
 FGameplayAbilityTargetDataHandle UAbilitySystemBlueprintLibrary::AppendTargetDataHandle(FGameplayAbilityTargetDataHandle TargetHandle, const FGameplayAbilityTargetDataHandle& HandleToAdd)
 {
 	TargetHandle.Append(HandleToAdd);
@@ -242,9 +256,15 @@ FGameplayTargetDataFilterHandle UAbilitySystemBlueprintLibrary::MakeFilterHandle
 
 FGameplayEffectSpecHandle UAbilitySystemBlueprintLibrary::MakeSpecHandle(UGameplayEffect* InGameplayEffect, AActor* InInstigator, AActor* InEffectCauser, float InLevel)
 {
-	FGameplayEffectContext* EffectContext = UAbilitySystemGlobals::Get().AllocGameplayEffectContext();
-	EffectContext->AddInstigator(InInstigator, InEffectCauser);
-	return FGameplayEffectSpecHandle(new FGameplayEffectSpec(InGameplayEffect, FGameplayEffectContextHandle(EffectContext), InLevel));
+	if (InGameplayEffect)
+	{
+		FGameplayEffectContext* EffectContext = UAbilitySystemGlobals::Get().AllocGameplayEffectContext();
+		EffectContext->AddInstigator(InInstigator, InEffectCauser);
+		return FGameplayEffectSpecHandle(new FGameplayEffectSpec(InGameplayEffect, FGameplayEffectContextHandle(EffectContext), InLevel));
+	}
+	
+	ABILITY_LOG(Warning, TEXT("%s was called with an invalid GameplayEffect object!"), *FString(__FUNCTION__));
+	return FGameplayEffectSpecHandle();
 }
 
 FGameplayEffectSpecHandle UAbilitySystemBlueprintLibrary::CloneSpecHandle(AActor* InNewInstigator, AActor* InEffectCauser, FGameplayEffectSpecHandle GameplayEffectSpecHandle_Clone)

@@ -1,8 +1,10 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "GameplayDebuggerCategory_Abilities.h"
+#include "Engine/Engine.h"
+#include "Engine/GameViewportClient.h"
 
-#if WITH_GAMEPLAY_DEBUGGER
+#if WITH_GAMEPLAY_DEBUGGER_MENU
 
 #include "GameplayTagContainer.h"
 #include "GameplayAbilitySpec.h"
@@ -99,7 +101,7 @@ void FGameplayDebuggerCategory_Abilities::CollectData(APlayerController* OwnerPC
 			ItemData.Ability.RemoveFromStart(DEFAULT_OBJECT_PREFIX);
 			ItemData.Ability.RemoveFromEnd(TEXT("_C"));
 
-			ItemData.Source = GetNameSafe(AbilitySpec.SourceObject);
+			ItemData.Source = GetNameSafe(AbilitySpec.SourceObject.Get());
 			ItemData.Source.RemoveFromStart(DEFAULT_OBJECT_PREFIX);
 
 			ItemData.Level = AbilitySpec.Level;
@@ -241,4 +243,4 @@ void FGameplayDebuggerCategory_Abilities::DrawData(APlayerController* OwnerPC, F
 	}
 }
 
-#endif // WITH_GAMEPLAY_DEBUGGER
+#endif // WITH_GAMEPLAY_DEBUGGER_MENU

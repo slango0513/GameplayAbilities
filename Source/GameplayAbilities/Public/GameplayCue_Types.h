@@ -48,7 +48,7 @@ struct FGameplayCuePendingExecute
 
 	/** What component to send the cue on */
 	UPROPERTY()
-	UAbilitySystemComponent* OwningComponent = nullptr;
+	TObjectPtr<UAbilitySystemComponent> OwningComponent = nullptr;
 
 	/** If this cue is from a spec, here's the copy of that spec */
 	UPROPERTY()
@@ -59,6 +59,14 @@ struct FGameplayCuePendingExecute
 	FGameplayCueParameters CueParameters;
 };
 
+USTRUCT()
+struct FGameplayCueNotifyActorArray
+{
+	GENERATED_BODY()
+
+	UPROPERTY(transient)
+	TArray<TObjectPtr<AGameplayCueNotify_Actor>> Actors;
+};
 
 /** Struct for pooling and preallocating gameplaycuenotify_actor classes. This data is per world and used to track what actors are available to recycle and which classes need to preallocate instances of those actors */
 USTRUCT()
@@ -67,11 +75,12 @@ struct FPreallocationInfo
 	GENERATED_USTRUCT_BODY()
 
 	/** Raw list of pooled instances. This relies on NotifyGameplayCueActorEndPlay always being called when actor is destroyed */
-	TMap<UClass*, TArray<AGameplayCueNotify_Actor*> >	PreallocatedInstances;
-
-	/** List of calsses that will be pooled */
 	UPROPERTY(transient)
-	TArray<TSubclassOf<AGameplayCueNotify_Actor>>	ClassesNeedingPreallocation;
+	TMap<TObjectPtr<UClass>, FGameplayCueNotifyActorArray> PreallocatedInstances;
+
+	/** List of classes that will be pooled */
+	UPROPERTY(transient)
+	TArray<TSubclassOf<AGameplayCueNotify_Actor>> ClassesNeedingPreallocation;
 
 	/** World that owns this list */
 	FObjectKey OwningWorldKey;

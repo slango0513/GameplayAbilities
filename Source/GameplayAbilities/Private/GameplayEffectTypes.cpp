@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "GameplayEffectTypes.h"
+#include "AbilitySystemLog.h"
 #include "GameFramework/Pawn.h"
 #include "GameplayTagAssetInterface.h"
 #include "GameplayEffect.h"
@@ -10,6 +11,8 @@
 #include "AbilitySystemComponent.h"
 #include "Engine/PackageMapClient.h"
 
+#include UE_INLINE_GENERATED_CPP_BY_NAME(GameplayEffectTypes)
+
 
 #define LOCTEXT_NAMESPACE "GameplayEffectTypes"
 
@@ -18,6 +21,18 @@
 const FName FGameplayModEvaluationChannelSettings::ForceHideMetadataKey(TEXT("ForceHideEvaluationChannel"));
 const FString FGameplayModEvaluationChannelSettings::ForceHideMetadataEnabledValue(TEXT("True"));
 #endif // #if WITH_EDITORONLY_DATA
+
+#if !UE_BUILD_SHIPPING
+namespace UE::Private
+{
+static bool bWarnIfTryingToReplicateNotSupportedActorReference = false;
+static FAutoConsoleVariableRef CVarWarnIfTryingToReplicateNotSupportedActorReference(
+	TEXT("GameplayEffectContext.WarnIfTryingToReplicateNotSupportedActorReference"),
+	bWarnIfTryingToReplicateNotSupportedActorReference,
+	TEXT("If set to true a warning will be issued if we are trying to replicate a reference to a not supported actor as part of a GameplayEffectContext."),
+	ECVF_Default);
+}
+#endif
 
 FGameplayModEvaluationChannelSettings::FGameplayModEvaluationChannelSettings()
 {
@@ -61,6 +76,14 @@ EGameplayModEvaluationChannel FGameplayModEvaluationChannelSettings::GetEvaluati
 	}
 
 	return EGameplayModEvaluationChannel::Channel0;
+}
+
+void FGameplayModEvaluationChannelSettings::SetEvaluationChannel(EGameplayModEvaluationChannel NewChannel)
+{
+	if (ensure(UAbilitySystemGlobals::Get().IsGameplayModEvaluationChannelValid(NewChannel)))
+	{
+		Channel = NewChannel;
+	}
 }
 
 float GameplayEffectUtilities::GetModifierBiasByModifierOp(EGameplayModOp::Type ModOp)
@@ -112,13 +135,39 @@ FString FGameplayEffectAttributeCaptureDefinition::ToSimpleString() const
 //
 // --------------------------------------------------------------------------------------------------------------------------------------------------------
 
+bool FGameplayEffectContext::CanActorReferenceBeReplicated(const AActor* Actor)
+{
+	// We always support replication of null references and stably named actors
+	if (!Actor || Actor->IsFullNameStableForNetworking())
+	{
+		return true;
+	}
+
+	// If we get here this is a dynamic object and we only want to replicate the reference if the actor is set to replicate, otherwise the resolve on the client will constantly fail
+	const bool bIsSupportedForNetWorking = Actor->IsSupportedForNetworking();
+	const bool bCanDynamicReferenceBeReplicated = bIsSupportedForNetWorking && Actor->GetIsReplicated();
+
+#if !UE_BUILD_SHIPPING
+	// Optionally trigger warning if we are trying to replicate a reference to an object that never will be resolvable on receiving end
+	if (UE::Private::bWarnIfTryingToReplicateNotSupportedActorReference && (!bCanDynamicReferenceBeReplicated && bIsSupportedForNetWorking))
+	{
+		ABILITY_LOG(Warning, TEXT("Attempted to replicate a reference to dynamically spawned object that is set to not replicate %s."), *(Actor->GetName()));
+	}
+#endif
+
+	return bCanDynamicReferenceBeReplicated;
+}
+
 void FGameplayEffectContext::AddInstigator(class AActor *InInstigator, class AActor *InEffectCauser)
 {
 	Instigator = InInstigator;
-	EffectCauser = InEffectCauser;
+	bReplicateInstigator = CanActorReferenceBeReplicated(InInstigator);
+
+	SetEffectCauser(InEffectCauser);
+
 	InstigatorAbilitySystemComponent = NULL;
 
-	// Cache off his AbilitySystemComponent.
+	// Cache off the AbilitySystemComponent.
 	InstigatorAbilitySystemComponent = UAbilitySystemGlobals::GetAbilitySystemComponentFromActor(Instigator.Get());
 }
 
@@ -174,11 +223,11 @@ bool FGameplayEffectContext::NetSerialize(FArchive& Ar, class UPackageMap* Map, 
 	uint8 RepBits = 0;
 	if (Ar.IsSaving())
 	{
-		if (Instigator.IsValid() )
+		if (bReplicateInstigator && Instigator.IsValid())
 		{
 			RepBits |= 1 << 0;
 		}
-		if (EffectCauser.IsValid() )
+		if (bReplicateEffectCauser && EffectCauser.IsValid() )
 		{
 			RepBits |= 1 << 1;
 		}
@@ -254,6 +303,12 @@ bool FGameplayEffectContext::NetSerialize(FArchive& Ar, class UPackageMap* Map, 
 	
 	bOutSuccess = true;
 	return true;
+}
+
+FString FGameplayEffectContext::ToString() const
+{
+	const AActor* InstigatorPtr = Instigator.Get();
+	return (InstigatorPtr ? InstigatorPtr->GetName() : FString(TEXT("NONE")));
 }
 
 bool FGameplayEffectContext::IsLocallyControlled() const
@@ -856,6 +911,12 @@ FGameplayEffectSpecHandle::FGameplayEffectSpecHandle(FGameplayEffectSpec* DataPt
 
 }
 
+bool FGameplayEffectSpecHandle::NetSerialize(FArchive& Ar, class UPackageMap* Map, bool& bOutSuccess)
+{
+	ABILITY_LOG(Fatal, TEXT("FGameplayEffectSpecHandle should not be NetSerialized"));
+	return false;
+}
+
 FGameplayCueParameters::FGameplayCueParameters(const FGameplayEffectSpecForRPC& Spec)
 : NormalizedMagnitude(0.0f)
 , RawMagnitude(0.0f)
@@ -1121,6 +1182,23 @@ const UObject* FGameplayCueParameters::GetSourceObject() const
 	return EffectContext.GetSourceObject();
 }
 
+void FMinimalReplicationTagCountMap::RemoveTag(const FGameplayTag& Tag)
+{
+	MapID++;
+	int32& Count = TagMap.FindOrAdd(Tag);
+	Count--;
+	if (Count == 0)
+	{
+		// Remove from map so that we do not replicate
+		TagMap.Remove(Tag);
+	}
+	else if (Count < 0)
+	{
+		ABILITY_LOG(Error, TEXT("FMinimalReplicationTagCountMap::RemoveTag called on Tag %s and count is now < 0"), *Tag.ToString());
+		Count = 0;
+	}
+}
+
 bool FMinimalReplicationTagCountMap::NetSerialize(FArchive& Ar, class UPackageMap* Map, bool& bOutSuccess)
 {
 	const int32 CountBits = UAbilitySystemGlobals::Get().MinimalReplicationTagCountBits;
@@ -1133,7 +1211,7 @@ bool FMinimalReplicationTagCountMap::NetSerialize(FArchive& Ar, class UPackageMa
 		if (Count > MaxCount)
 		{
 #if UE_BUILD_SHIPPING
-			ABILITY_LOG(Error, TEXT("FMinimalReplicationTagCountMap has too many tags (%d) when the limit is %d. This will cause tags to not replicate. See FMinimapReplicationTagCountMap::NetSerialize"), TagMap.Num(), MaxCount);
+			ABILITY_LOG(Error, TEXT("FMinimalReplicationTagCountMap has too many tags (%d) when the limit is %d. This will cause tags to not replicate. See FMinimalReplicationTagCountMap::NetSerialize"), TagMap.Num(), MaxCount);
 #else
 			TArray<FGameplayTag> TagKeys;
 			TagMap.GetKeys(TagKeys);
@@ -1152,7 +1230,7 @@ bool FMinimalReplicationTagCountMap::NetSerialize(FArchive& Ar, class UPackageMa
 				TagKeys[TagIndex].GetTagName().AppendString(TagsString);
 			}
 
-			ABILITY_LOG(Error, TEXT("FMinimalReplicationTagCountMap has too many tags (%d) when the limit is %d. This will cause tags to not replicate. See FMinimapReplicationTagCountMap::NetSerialize\nTagMap tags: %s"), TagMap.Num(), MaxCount, *TagsString);
+			ABILITY_LOG(Error, TEXT("FMinimalReplicationTagCountMap has too many tags (%d) when the limit is %d. This will cause tags to not replicate. See FMinimalReplicationTagCountMap::NetSerialize\nTagMap tags: %s"), TagMap.Num(), MaxCount, *TagsString);
 #endif	
 
 			//clamp the count
@@ -1265,3 +1343,4 @@ void FMinimalReplicationTagCountMap::UpdateOwnerTagMap()
 }
 
 #undef LOCTEXT_NAMESPACE
+

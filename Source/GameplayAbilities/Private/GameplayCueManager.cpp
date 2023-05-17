@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "GameplayCueManager.h"
+#include "Engine/Blueprint.h"
 #include "Engine/ObjectLibrary.h"
 #include "GameplayCueNotify_Actor.h"
 #include "Misc/MessageDialog.h"
@@ -11,7 +12,8 @@
 #include "GameplayTagsManager.h"
 #include "GameplayTagsModule.h"
 #include "AbilitySystemGlobals.h"
-#include "AssetRegistryModule.h"
+#include "AbilitySystemLog.h"
+#include "AssetRegistry/AssetRegistryModule.h"
 #include "GameplayCueInterface.h"
 #include "GameplayCueSet.h"
 #include "GameplayCueNotify_Static.h"
@@ -22,6 +24,9 @@
 #include "Net/UnrealNetwork.h"
 #include "Misc/CoreDelegates.h"
 #include "AbilitySystemReplicationProxyInterface.h"
+#include "UObject/LinkerLoad.h"
+
+#include UE_INLINE_GENERATED_CPP_BY_NAME(GameplayCueManager)
 
 #if WITH_EDITOR
 #include "Editor.h"
@@ -421,7 +426,7 @@ AGameplayCueNotify_Actor* UGameplayCueManager::GetInstancedCueActor(AActor* Targ
 		
 #if WITH_EDITOR	
 		// Animtion preview hack. If we are trying to play the GC on a CDO, then don't use actor recycling and don't set the owner (to the CDO, which would cause problems)
-		if (TargetActor && TargetActor->HasAnyFlags(RF_ClassDefaultObject))
+		if (TargetActor->HasAnyFlags(RF_ClassDefaultObject))
 		{
 			NewOwnerActor = nullptr;
 			UseActorRecycling = false;
@@ -431,13 +436,13 @@ AGameplayCueNotify_Actor* UGameplayCueManager::GetInstancedCueActor(AActor* Targ
 		if (UseActorRecycling)
 		{
 			FPreallocationInfo& Info = GetPreallocationInfo(World);
-			TArray<AGameplayCueNotify_Actor*>* PreallocatedList = Info.PreallocatedInstances.Find(CueClass);
-			if (PreallocatedList && PreallocatedList->Num() > 0)
+			FGameplayCueNotifyActorArray* PreallocatedList = Info.PreallocatedInstances.Find(CueClass);
+			if (PreallocatedList && PreallocatedList->Actors.Num() > 0)
 			{
 				SpawnedCue = nullptr;
 				while (true)
 				{
-					SpawnedCue = PreallocatedList->Pop(false);
+					SpawnedCue = PreallocatedList->Actors.Pop(false);
 
 					// Temp: tracking down possible memory corruption
 					// null is maybe ok. But invalid low level is bad and we want to crash hard to find out who/why.
@@ -455,7 +460,7 @@ AGameplayCueNotify_Actor* UGameplayCueManager::GetInstancedCueActor(AActor* Targ
 					// outside of replays, this should not happen. GC Notifies should not be actually destroyed.
 					checkf(World->IsPlayingReplay(), TEXT("Spawned Cue is pending kill, garbage or null: %s."), *GetNameSafe(SpawnedCue));
 
-					if (PreallocatedList->Num() <= 0)
+					if (PreallocatedList->Actors.Num() <= 0)
 					{
 						// Ran out of preallocated instances... break and create a new one.
 						break;
@@ -550,12 +555,12 @@ void UGameplayCueManager::NotifyGameplayCueActorFinished(AGameplayCueNotify_Acto
 			UE_CLOG((GameplayCueActorRecycleDebug>0), LogAbilitySystem, Display, TEXT("NotifyGameplayCueActorFinished %s"), *GetNameSafe(Actor));
 
 			FPreallocationInfo& Info = GetPreallocationInfo(Actor->GetWorld());
-			TArray<AGameplayCueNotify_Actor*>& PreAllocatedList = Info.PreallocatedInstances.FindOrAdd(Actor->GetClass());
+			FGameplayCueNotifyActorArray& PreAllocatedList = Info.PreallocatedInstances.FindOrAdd(Actor->GetClass());
 
 			// Put the actor back in the list
-			if (ensureMsgf(PreAllocatedList.Contains(Actor)==false, TEXT("GC Actor PreallocationList already contains Actor %s"), *GetNameSafe(Actor)))
+			if (ensureMsgf(PreAllocatedList.Actors.Contains(Actor)==false, TEXT("GC Actor PreallocationList already contains Actor %s"), *GetNameSafe(Actor)))
 			{
-				PreAllocatedList.Push(Actor);
+				PreAllocatedList.Actors.Push(Actor);
 			}
 			
 #if WITH_EDITOR
@@ -576,8 +581,8 @@ void UGameplayCueManager::NotifyGameplayCueActorEndPlay(AGameplayCueNotify_Actor
 	if (Actor && Actor->bInRecycleQueue)
 	{
 		FPreallocationInfo& Info = GetPreallocationInfo(Actor->GetWorld());
-		TArray<AGameplayCueNotify_Actor*>& PreAllocatedList = Info.PreallocatedInstances.FindOrAdd(Actor->GetClass());
-		PreAllocatedList.Remove(Actor);
+		FGameplayCueNotifyActorArray& PreAllocatedList = Info.PreallocatedInstances.FindOrAdd(Actor->GetClass());
+		PreAllocatedList.Actors.Remove(Actor);
 	}
 }
 
@@ -601,6 +606,8 @@ bool UGameplayCueManager::ShouldAsyncLoadRuntimeObjectLibraries() const
 
 void UGameplayCueManager::InitializeRuntimeObjectLibrary()
 {
+	UE_SCOPED_ENGINE_ACTIVITY(TEXT("Initializing GameplayCueManager Runtime Object Library"));
+
 	RuntimeGameplayCueObjectLibrary.Paths = GetAlwaysLoadedGameplayCuePaths();
 	if (RuntimeGameplayCueObjectLibrary.CueSet == nullptr)
 	{
@@ -894,7 +901,7 @@ void UGameplayCueManager::BuildCuesToAddToGlobalSet(const TArray<FAssetData>& As
 			const FString GeneratedClassTag = Data.GetTagValueRef<FString>(FBlueprintTags::GeneratedClassPath);
 			if (GeneratedClassTag.IsEmpty())
 			{
-				ABILITY_LOG(Warning, TEXT("Unable to find GeneratedClass value for AssetData %s"), *Data.ObjectPath.ToString());
+				ABILITY_LOG(Warning, TEXT("Unable to find GeneratedClass value for AssetData %s"), *Data.GetObjectPathString());
 				continue;
 			}
 
@@ -1032,7 +1039,7 @@ void UGameplayCueManager::HandleAssetAdded(UObject *Object)
 		
 		if (StaticCDO || ActorCDO)
 		{
-			if (VerifyNotifyAssetIsInValidPath(Blueprint->GetOuter()->GetPathName()))
+			if (!Blueprint->GetOutermost()->HasAnyPackageFlags(PKG_ForDiffing) && VerifyNotifyAssetIsInValidPath(Blueprint->GetOuter()->GetPathName()))
 			{
 				FSoftObjectPath StringRef;
 				StringRef.SetPath(Blueprint->GeneratedClass->GetPathName());
@@ -1109,7 +1116,7 @@ void UGameplayCueManager::HandleAssetRenamed(const FAssetData& Data, const FStri
 
 				for (UGameplayCueSet* Set : GetGlobalCueSets())
 				{
-					Set->UpdateCueByStringRefs(String + TEXT("_C"), Data.ObjectPath.ToString() + TEXT("_C"));
+					Set->UpdateCueByStringRefs(String + TEXT("_C"), Data.GetObjectPathString() + TEXT("_C"));
 				}
 				OnGameplayCueNotifyAddOrRemove.Broadcast();
 			}
@@ -1557,12 +1564,12 @@ void UGameplayCueManager::UpdatePreallocation(UWorld* World)
 	{
 		TSubclassOf<AGameplayCueNotify_Actor> GCClass = Info.ClassesNeedingPreallocation.Last();
 		AGameplayCueNotify_Actor* CDO = GCClass->GetDefaultObject<AGameplayCueNotify_Actor>();
-		TArray<AGameplayCueNotify_Actor*>& PreallocatedList = Info.PreallocatedInstances.FindOrAdd(CDO->GetClass());
+		FGameplayCueNotifyActorArray& PreallocatedList = Info.PreallocatedInstances.FindOrAdd(CDO->GetClass());
 
 		AGameplayCueNotify_Actor* PrespawnedInstance = Cast<AGameplayCueNotify_Actor>(World->SpawnActor(CDO->GetClass()));
 		if (ensureMsgf(PrespawnedInstance, TEXT("Failed to prespawn GC notify for: %s"), *GetNameSafe(CDO)))
 		{
-			ensureMsgf(IsValid(PrespawnedInstance) == false, TEXT("Newly spawned GC is PendingKILL: %s"), *GetNameSafe(CDO));
+			ensureMsgf(IsValid(PrespawnedInstance) == true, TEXT("Newly spawned GC is invalid: %s"), *GetNameSafe(CDO));
 
 			if (LogGameplayCueActorSpawning)
 			{
@@ -1570,10 +1577,10 @@ void UGameplayCueManager::UpdatePreallocation(UWorld* World)
 			}
 
 			PrespawnedInstance->bInRecycleQueue = true;
-			PreallocatedList.Push(PrespawnedInstance);
+			PreallocatedList.Actors.Push(PrespawnedInstance);
 			PrespawnedInstance->SetActorHiddenInGame(true);
 
-			if (PreallocatedList.Num() >= CDO->NumPreallocatedInstances)
+			if (PreallocatedList.Actors.Num() >= CDO->NumPreallocatedInstances)
 			{
 				Info.ClassesNeedingPreallocation.Pop(false);
 			}
@@ -1619,22 +1626,6 @@ void UGameplayCueManager::OnWorldCleanup(UWorld* World, bool bSessionEnded, bool
 	IGameplayCueInterface::ClearTagToFunctionMap();
 }
 
-void UGameplayCueManager::AddReferencedObjects(UObject* InThis, FReferenceCollector& Collector)
-{
-	Super::AddReferencedObjects(InThis, Collector);
-
-	UGameplayCueManager* GCManager = Cast<UGameplayCueManager>(InThis);
-	for (int32 idx = 0; idx < GCManager->PreallocationInfoList_Internal.Num(); ++idx)
-	{
-		FPreallocationInfo& Info = GCManager->PreallocationInfoList_Internal[idx];
-		for (auto &It : Info.PreallocatedInstances)
-		{
-			TArray<AGameplayCueNotify_Actor*>& GameplayCueArray = It.Value;
-			Collector.AddReferencedObjects(GameplayCueArray);
-		}
-	}
-}
-
 void UGameplayCueManager::DumpPreallocationStats(UWorld* World)
 {
 	if (World == nullptr)
@@ -1649,7 +1640,7 @@ void UGameplayCueManager::DumpPreallocationStats(UWorld* World)
 		{
 			if (AGameplayCueNotify_Actor* CDO = ThisClass->GetDefaultObject<AGameplayCueNotify_Actor>())
 			{
-				TArray<AGameplayCueNotify_Actor*>& List = It.Value;
+				TArray<AGameplayCueNotify_Actor*>& List = It.Value.Actors;
 				if (List.Num() > CDO->NumPreallocatedInstances)
 				{
 					ABILITY_LOG(Display, TEXT("Notify class: %s was used simultaneously %d times. The CDO default is %d preallocated instanced."), *ThisClass->GetName(), List.Num(),  CDO->NumPreallocatedInstances); 
@@ -1725,3 +1716,4 @@ FAutoConsoleCommandWithWorld PrintGameplayCueTranslatorCmd(
 #if WITH_EDITOR
 #undef LOCTEXT_NAMESPACE
 #endif
+
